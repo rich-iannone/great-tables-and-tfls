@@ -51,7 +51,7 @@ tbl = tbl.with_columns(
 )
 ```
 
-Four columns will receive number formatting, this time to 3 significant figures.
+Four columns will receive number formatting.
 
 ```{python}
 tbl = tbl.with_columns(
@@ -109,7 +109,7 @@ gt_table = (
 gt_table
 ```
 
-Let's remove all of those cells that have `NA` in them. We can do this with the `sub_missing()` method.
+Let's remove all of those cells that have `None` in them. We can do this with the `sub_missing()` method.
 Ensure that he replacement text is an empty string (`""`).
 
 ```{python}
