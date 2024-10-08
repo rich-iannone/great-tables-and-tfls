@@ -1,0 +1,194 @@
+---
+output: html_document
+---
+
+```{python}
+import polars as pl
+import polars.selectors as cs
+from great_tables import GT, md, vals
+from datetime import datetime
+```
+
+## Data preparation work before generating the summary table
+
+Import the data table.
+
+```{python}
+tbl = pl.read_csv("csv_data/data-14_3_13.csv")
+```
+
+Take a look at the structure of the table.
+
+```{python}
+tbl
+```
+
+Get all rows with the *N* values.
+
+```{python}
+n_values_row = tbl.filter(pl.col("label") == "n")
+```
+
+Pull the highest *N* value for each of the required columns.
+
+```{python}
+placebo_n = max(n_values_row["placebo"].to_list())
+xanomeline_ld_n = max(n_values_row["xanomeline_ld"].to_list())
+xanomeline_hd_n = max(n_values_row["xanomeline_hd"].to_list())
+```
+
+The p-value column (`"p"`) should be formatted in Polars to 4 decimal places. We'll use `with_columns()`, `map_elements()`,
+and `vals.fmt_number()` to do this.
+
+```{python}
+tbl = tbl.with_columns(
+  pl.col("p")
+  .map_elements(
+    lambda x: vals.fmt_number(x, decimals=4).pop(),
+    return_dtype=pl.String
+  )
+)
+```
+
+Three columns will receive integer formatting, this time to 3 significant figures.
+
+```{python}
+tbl = tbl.with_columns(
+  pl.col(["placebo", "xanomeline_ld", "xanomeline_hd"])
+  .map_elements(
+    lambda x: vals.fmt_integer(x).pop(),
+    return_dtype=pl.String
+  )
+)
+```
+
+Values that are percentage values will be formatted as such in Polars.
+
+```{python}
+tbl = tbl.with_columns(
+  cs.ends_with("_pct")
+  .map_elements(
+    lambda x: vals.fmt_percent(x, decimals=0, scale_values=False, pattern=" ({x})").pop(),
+    return_dtype=pl.String
+  )
+)
+```
+
+We'll combine pairs of columns (absolute number + percentage value) using the Polars `concat_str()` method.
+
+```{python}
+tbl = tbl.with_columns(placebo=pl.concat_str(pl.col("placebo") + pl.col("placebo_pct").fill_null("")))
+tbl = tbl.with_columns(xanomeline_ld=pl.concat_str(pl.col("xanomeline_ld") + pl.col("xanomeline_ld_pct").fill_null("")))
+tbl = tbl.with_columns(xanomeline_hd=pl.concat_str(pl.col("xanomeline_hd") + pl.col("xanomeline_hd_pct").fill_null("")))
+```
+
+## Summary table generation with Great Tables
+
+Introduce the `tbl` DataFrame to the `GT()` class and print the table.
+
+```{python}
+gt_table = GT(tbl)
+
+gt_table
+```
+
+We will continue to build the GT table with methods. Next, we will add a table header. This contains a
+title (`"Table 14.2.01"`) and a subtitle (`"Summary of Demographic and Baseline Characteristics"`).
+
+```{python}
+gt_table = (
+  gt_table
+  .tab_header(
+    title="Table 14.3.13",
+    subtitle="CIBIC+ - Categorical Analysis - LOCF"
+  )
+)
+
+gt_table
+```
+
+
+Let's remove all of those cells that have `NA` in them. We can do this with the `sub_missing()` method.
+Ensure that he replacement text is an empty string (`""`).
+
+```{python}
+gt_table = gt_table.sub_missing(missing_text="")
+
+gt_table
+```
+
+We don't need the percentage columns (all end in `_pct`) so let's hide them with `cols_hide()`.
+
+```{python}
+gt_table = gt_table.cols_hide(columns=cs.ends_with("_pct"))
+
+gt_table
+```
+
+We need column labels that work better than the short ones commonly used for data analysis.
+With `cols_label()` we can replace the default labels (i.e., column names are used as the default labels).
+We wrap the label strings with `md()` to enable Markdown formatting. To add a line break, use the
+following bit of text `"  \n"`. Note that we are adding in data from variables we declared earlier.
+
+```{python}
+gt_table = (
+  gt_table
+  .cols_label(
+    category="",
+    label="Assessment",
+    placebo=md(f"Placebo  \n(N={placebo_n})"),
+    xanomeline_ld=md(f"Xanomeline  \nLow Dose  \n(N={xanomeline_ld_n})"),
+    xanomeline_hd=md(f"Xanomeline  \nHigh Dose  \n(N={xanomeline_hd_n})"),
+    p="p-value"
+  )
+)
+
+gt_table
+```
+
+Let's add two source notes. This can be done with the `tab_source_note()` method.
+
+```{python}
+gt_table = (
+  gt_table
+  .tab_source_note(
+    source_note="Overall comparison of treatments using CMH test (Pearson Chi-Square), controlling for site group."
+  )
+  .tab_source_note(
+    source_note=f"{datetime.now().date().isoformat()}"
+  )
+)
+
+gt_table
+```
+
+
+Putting it all together, you can write the table as one block of code.
+
+```{python}
+gt_table_final = (
+  GT(tbl)
+  .tab_header(
+    title="Table 14.3.13",
+    subtitle="CIBIC+ - Categorical Analysis - LOCF"
+  )
+  .sub_missing(missing_text="")
+  .cols_hide(columns=cs.ends_with("_pct"))
+  .cols_label(
+    category="",
+    label="Assessment",
+    placebo=md(f"Placebo  \n(N={placebo_n})"),
+    xanomeline_ld=md(f"Xanomeline  \nLow Dose  \n(N={xanomeline_ld_n})"),
+    xanomeline_hd=md(f"Xanomeline  \nHigh Dose  \n(N={xanomeline_hd_n})"),
+    p="p-value"
+  )
+  .tab_source_note(
+    source_note="Overall comparison of treatments using CMH test (Pearson Chi-Square), controlling for site group."
+  )
+  .tab_source_note(
+    source_note=f"{datetime.now().date().isoformat()}"
+  )
+)
+
+gt_table_final
+```
