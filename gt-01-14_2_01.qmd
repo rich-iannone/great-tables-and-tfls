@@ -1,0 +1,192 @@
+---
+output: html_document
+---
+
+```{python}
+import polars as pl
+import polars.selectors as cs
+from great_tables import GT, md, vals
+from datetime import datetime
+```
+
+## Data preparation work before generating the summary table
+
+Import the data table.
+
+```{python}
+tbl = pl.read_csv("csv_data/data-14_2_01.csv")
+```
+
+Take a look at the structure of the table.
+
+```{python}
+tbl
+```
+
+Get the row with the *N* values.
+
+```{python}
+n_values_row = tbl.filter(pl.col("category") == "Age (y)")
+```
+
+Pull each of the *N* values for the required columns. Format them as integer values (i.e., remove the decimal part).
+
+```{python}
+placebo_n = vals.fmt_integer(n_values_row.item(0, "placebo")).pop()
+xanomeline_ld_n = vals.fmt_integer(n_values_row.item(0, "xanomeline_ld")).pop()
+xanomeline_hd_n = vals.fmt_integer(n_values_row.item(0, "xanomeline_hd")).pop()
+total_n = vals.fmt_integer(n_values_row.item(0, "total")).pop()
+```
+
+The p-value column (`"p"`) should be formatted in Polars to 4 decimal places. We'll use `with_columns()`, `map_elements()`,
+and `vals.fmt_number()` to do this.
+
+```{python}
+tbl = tbl.with_columns(
+  pl.col("p")
+  .map_elements(
+    lambda x: vals.fmt_number(x, decimals=4).pop(),
+    return_dtype=pl.String
+  )
+)
+```
+
+Four columns will receive number formatting, this time to 3 significant figures.
+
+```{python}
+tbl = tbl.with_columns(
+  pl.col(["placebo", "xanomeline_ld", "xanomeline_hd", "total"])
+  .map_elements(
+    lambda x: vals.fmt_number(x, n_sigfig=3).pop(),
+    return_dtype=pl.String
+  )
+)
+```
+
+Values that are percentage values will be formatted as such in Polars.
+
+```{python}
+tbl = tbl.with_columns(
+  cs.ends_with("_pct")
+  .map_elements(
+    lambda x: vals.fmt_percent(x, decimals=0, scale_values=False, pattern=" ({x})").pop(),
+    return_dtype=pl.String
+  )
+)
+```
+
+We'll combine pairs of columns (absolute number + percentage value) using the Polars `concat_str()` method.
+
+```{python}
+tbl = tbl.with_columns(placebo=pl.concat_str(pl.col("placebo") + pl.col("placebo_pct").fill_null("")))
+tbl = tbl.with_columns(xanomeline_ld=pl.concat_str(pl.col("xanomeline_ld") + pl.col("xanomeline_ld_pct").fill_null("")))
+tbl = tbl.with_columns(xanomeline_hd=pl.concat_str(pl.col("xanomeline_hd") + pl.col("xanomeline_hd_pct").fill_null("")))
+tbl = tbl.with_columns(total=pl.concat_str(pl.col("total") + pl.col("total_pct").fill_null("")))
+```
+
+## Summary table generation with Great Tables
+
+Introduce the `tbl` DataFrame to the `GT()` class and print the table.
+
+```{python}
+gt_table = GT(tbl)
+
+gt_table
+```
+
+We will continue to build the GT table with methods. Next, we will add a table header. This contains a
+title (`"Table 14.2.01"`) and a subtitle (`"Summary of Demographic and Baseline Characteristics"`).
+
+```{python}
+gt_table = (
+  gt_table
+  .tab_header(
+    title="Table 14.2.01",
+    subtitle="Summary of Demographic and Baseline Characteristics"
+  )
+)
+
+gt_table
+```
+
+Let's remove all of those cells that have `NA` in them. We can do this with the `sub_missing()` method.
+Ensure that he replacement text is an empty string (`""`).
+
+```{python}
+gt_table = gt_table.sub_missing(missing_text="")
+
+gt_table
+```
+
+We don't need the percentage columns (all end in `_pct`) so let's hide them with `cols_hide()`.
+
+```{python}
+gt_table = gt_table.cols_hide(columns=cs.ends_with("_pct"))
+
+gt_table
+```
+
+We need column labels that work better than the short ones commonly used for data analysis.
+With `cols_label()` we can replace the default labels (i.e., column names are used as the default labels).
+We wrap the label strings with `md()` to enable Markdown formatting. To add a line break, use the
+following bit of text `"  \n"`. Note that we are adding in data from variables we declared earlier.
+
+```{python}
+gt_table = (
+  gt_table
+  .cols_label(
+    placebo=md(f"Placebo  \n(N={placebo_n})"),
+    xanomeline_ld=md(f"Xanomeline  \nLow Dose  \n(N={xanomeline_ld_n})"),
+    xanomeline_hd=md(f"Xanomeline  \nHigh Dose  \n(N={xanomeline_hd_n})"),
+    total=md(f"Total  \n(N={total_n})"),
+    p="p-value"
+  )
+)
+
+gt_table
+```
+
+Let's add a source note. This can be done with the `tab_source_note()` method.
+
+```{python}
+gt_table = (
+  gt_table
+  .tab_source_note(
+    source_note=f"Program Source: 14-2.01 Executed: (Draft) {datetime.now().date().isoformat()}"
+  )
+)
+
+gt_table
+```
+
+Putting it all together, you can write the table as one block of code.
+
+```{python}
+gt_table_final = (
+  GT(tbl)
+  .tab_header(
+    title="Table 14.2.01",
+    subtitle="Summary of Demographic and Baseline Characteristics"
+  )
+  .sub_missing(missing_text="")
+  .cols_hide(columns=cs.ends_with("_pct"))
+  .cols_label(
+    placebo=md(f"Placebo  \n(N={placebo_n})"),
+    xanomeline_ld=md(f"Xanomeline  \nLow Dose  \n(N={xanomeline_ld_n})"),
+    xanomeline_hd=md(f"Xanomeline  \nHigh Dose  \n(N={xanomeline_hd_n})"),
+    total=md(f"Total  \n(N={total_n})"),
+    p="p-value[1]"
+  )
+  .tab_source_note(
+    source_note=f"Program Source: 14-2.01 Executed: (Draft) {datetime.now().date().isoformat()}"
+  )
+)
+
+gt_table_final
+```
+
+Writing the table to HTML can be done with the `save()` method.
+
+```{python}
+gt_table_final.save("html_14.2.01.html")
+```
