@@ -184,9 +184,3 @@ gt_table_final = (
 
 gt_table_final
 ```
-
-Writing the table to HTML can be done with the `save()` method.
-
-```{python}
-gt_table_final.save("html_14.2.01.html")
-```
