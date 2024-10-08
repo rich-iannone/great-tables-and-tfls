@@ -1,0 +1,254 @@
+---
+output: html_document
+---
+
+```{python}
+import polars as pl
+import polars.selectors as cs
+from great_tables import GT, md, vals
+from datetime import datetime
+```
+
+## Data preparation work before generating the summary table
+
+Import the data table.
+
+```{python}
+tbl = pl.read_csv("csv_data/data-14_5_01.csv")
+```
+
+Take a look at the structure of the table.
+
+```{python}
+tbl
+```
+
+Get all rows with the *N* values.
+
+```{python}
+n_values_row = tbl.filter(pl.col("label") == "n")
+```
+
+Get the *N* values for each of the required columns.
+
+```{python}
+placebo_n = 86
+xanomeline_ld_n = 84
+xanomeline_hd_n = 84
+```
+
+The Fisher test columns should be formatted in Polars to 3 decimal places. We'll use `with_columns()`, `map_elements()`,
+and `vals.fmt_number()` to do this.
+
+```{python}
+tbl = tbl.with_columns(
+  cs.starts_with("fisher")
+  .map_elements(
+    lambda x: vals.fmt_number(x, decimals=3).pop(),
+    return_dtype=pl.String
+  )
+)
+```
+
+Three columns will receive integer formatting.
+
+```{python}
+tbl = tbl.with_columns(
+  cs.ends_with("_n")
+  .map_elements(
+    lambda x: vals.fmt_integer(x).pop(),
+    return_dtype=pl.String
+  )
+)
+```
+
+Some integer values require square brackets around the formatted numbers.
+
+```{python}
+tbl = tbl.with_columns(
+  cs.ends_with("_ae")
+  .map_elements(
+    lambda x: vals.fmt_integer(x, pattern="[{x}]").pop(),
+    return_dtype=pl.String
+  )
+)
+```
+
+Values that are percentage values will be formatted as such in Polars.
+
+```{python}
+tbl = tbl.with_columns(
+  cs.ends_with("_pct")
+  .map_elements(
+    lambda x: vals.fmt_percent(x, decimals=0, scale_values=False, pattern=" ({x})").pop(),
+    return_dtype=pl.String
+  )
+)
+```
+
+We'll combine pairs of columns (absolute number + percentage value) using the Polars `concat_str()` method.
+
+```{python}
+tbl = tbl.with_columns(placebo_n=pl.concat_str(pl.col("placebo_n") + pl.col("placebo_pct").fill_null("")))
+tbl = tbl.with_columns(xanomeline_ld_n=pl.concat_str(pl.col("xanomeline_ld_n") + pl.col("xanomeline_ld_pct").fill_null("")))
+tbl = tbl.with_columns(xanomeline_hd_n=pl.concat_str(pl.col("xanomeline_hd_n") + pl.col("xanomeline_hd_pct").fill_null("")))
+```
+
+## Summary table generation with Great Tables
+
+Introduce the `tbl` DataFrame to the `GT()` class and print the table.
+
+```{python}
+gt_table = GT(tbl)
+
+gt_table
+```
+
+We will continue to build the GT table with methods. Next, we will add a table header. This contains a
+title (`"Table 14.2.01"`) and a subtitle (`"Summary of Demographic and Baseline Characteristics"`).
+
+```{python}
+gt_table = (
+  gt_table
+  .tab_header(
+    title="Table 14-5.01",
+    subtitle="Incidence of Treatment Emergent Adverse Events by Treatment Group",
+  )
+)
+
+gt_table
+```
+
+Let's remove all of those cells that have `None` in them. We can do this with the `sub_missing()` method.
+Ensure that he replacement text is an empty string (`""`).
+
+```{python}
+gt_table = gt_table.sub_missing(missing_text="")
+
+gt_table
+```
+
+We don't need the percentage columns (all end in `_pct`) so let's hide them with `cols_hide()`.
+
+```{python}
+gt_table = gt_table.cols_hide(columns=cs.ends_with("_pct"))
+
+gt_table
+```
+
+We need column labels that work better than the short ones commonly used for data analysis.
+With `cols_label()` we can replace the default labels (i.e., column names are used as the default labels).
+We wrap the label strings with `md()` to enable Markdown formatting. To add a line break, use the
+following bit of text `"  \n"`. Note that we are adding in data from variables we declared earlier.
+
+```{python}
+gt_table = (
+  gt_table
+  .cols_label(
+    label="Label",
+    placebo_n="n(%)",
+    xanomeline_ld_n="n(%)",
+    xanomeline_hd_n="n(%)",
+    placebo_ae="[AEs]",
+    xanomeline_ld_ae="[AEs]",
+    xanomeline_hd_ae="[AEs]",
+    fisher_placebo_v_xanomeline_ld=md("Placebo  \nvs.  \nLow Dose"),
+    fisher_placebo_v_xanomeline_hd=md("Placebo  \nvs.  \nHigh Dose")
+  )
+)
+
+gt_table
+```
+
+The `tab_spanner()` method is used to create spanner column labels (these are labels over top
+column labels).
+
+```{python}
+gt_table = (
+  gt_table
+  .tab_spanner(
+    label=md(f"Placebo  \n(N={placebo_n})"),
+    columns=cs.starts_with("placebo")
+  )
+  .tab_spanner(
+    label=md(f"Xanomeline  \nLow Dose  \n(N={xanomeline_ld_n})"),
+    columns=cs.starts_with("xanomeline_ld")
+  )
+  .tab_spanner(
+    label=md(f"Xanomeline  \nHigh Dose  \n(N={xanomeline_hd_n})"),
+    columns=cs.starts_with("xanomeline_hd")
+  )
+  .tab_spanner(
+    label=md("Fisher's Exact  \np-values"),
+    columns=cs.starts_with("fisher")
+  )
+)
+
+gt_table
+```
+
+
+Add source notes to the table.
+
+```{python}
+gt_table = (
+  gt_table
+  .tab_source_note(source_note = "Note: Treatment emergent events are defined as events which start on or after the start of treatment.")
+  .tab_source_note(source_note = "Note: Adverse events are coded using MedDRA.")
+  .tab_source_note(source_note = "Note: Percentages are based on the number of subjects in the safety population within each treatment group.")
+  .tab_source_note(source_note = "Note: P-values are based on Fisher's Exact test for the comparison of placebo versus each active treatment group. An asterisk is appended to p-values that are less than 0.15.")
+  .tab_source_note(source_note = "Note: The column [AE] represents the total number of times an event was recorded.")
+  .tab_source_note(source_note = f"Program Source: t-14-5-01.R     Executed: (Draft), {datetime.now().date().isoformat()}")
+  )
+
+gt_table
+```
+
+Putting it all together, you can write the table as one block of code.
+
+```{python}
+gt_table_final = (
+  GT(tbl)
+  .tab_header(
+    title="Table 14-5.01",
+    subtitle="Incidence of Treatment Emergent Adverse Events by Treatment Group",
+  )
+  .sub_missing(missing_text="")
+  .cols_hide(columns=cs.ends_with("_pct"))
+  .cols_label(
+    label="Label",
+    placebo_n="n(%)",
+    xanomeline_ld_n="n(%)",
+    xanomeline_hd_n="n(%)",
+    placebo_ae="[AEs]",
+    xanomeline_ld_ae="[AEs]",
+    xanomeline_hd_ae="[AEs]",
+    fisher_placebo_v_xanomeline_ld=md("Placebo  \nvs.  \nLow Dose"),
+    fisher_placebo_v_xanomeline_hd=md("Placebo  \nvs.  \nHigh Dose")
+  )
+  .tab_spanner(
+    label=md(f"Placebo  \n(N={placebo_n})"),
+    columns=cs.starts_with("placebo")
+  )
+  .tab_spanner(
+    label=md(f"Xanomeline  \nLow Dose  \n(N={xanomeline_ld_n})"),
+    columns=cs.starts_with("xanomeline_ld")
+  )
+  .tab_spanner(
+    label=md(f"Xanomeline  \nHigh Dose  \n(N={xanomeline_hd_n})"),
+    columns=cs.starts_with("xanomeline_hd")
+  )
+  .tab_spanner(
+    label=md("Fisher's Exact  \np-values"),
+    columns=cs.starts_with("fisher")
+  )
+  .tab_source_note(source_note = "Note: Treatment emergent events are defined as events which start on or after the start of treatment.")
+  .tab_source_note(source_note = "Note: Adverse events are coded using MedDRA.")
+  .tab_source_note(source_note = "Note: Percentages are based on the number of subjects in the safety population within each treatment group.")
+  .tab_source_note(source_note = "Note: P-values are based on Fisher's Exact test for the comparison of placebo versus each active treatment group. An asterisk is appended to p-values that are less than 0.15.")
+  .tab_source_note(source_note = "Note: The column [AE] represents the total number of times an event was recorded.")
+  .tab_source_note(source_note = f"Program Source: t-14-5-01.R     Executed: (Draft), {datetime.now().date().isoformat()}")
+)
+
+gt_table_final
+```
